@@ -37,6 +37,21 @@ class Parser(object):
 
 
     def __call__(self, example):
+        """A fucntional call for parsing data of the tf.Dataset object
+        A parsing procedure has 2 steps: decode and parse
+        - Decode: Extract data from tfrecord to its original state
+        - Parse: transform data to appropriate presentation before feeding to network,
+        also perform augmentation if necessary.
+
+        Args:
+            example (tf.train.Example): an Example object that contain an training example data
+
+        Returns:
+            tuple of image, category and mask
+            image: image data, shape (input_size, input_size, 3)
+            cat: category tensor, shape (S, S, C)
+            mask: mask tensor, shape (H, W, S^2)
+        """
         parsed_tensor = tf.io.parse_single_example(example, features = self.DECODE_FEATURES)
         data = self._decode(parsed_tensor)
         image, cat, mask = self._parse(data)
@@ -44,7 +59,7 @@ class Parser(object):
 
 
     def build_dataset(self, tfrecord_path, batch_size=8, num_epoch=None):
-        """Build a dataset object from tfrecord input
+        """Build a dataset object from tfrecord input. Setup batch, epoch, concurrency processing...
 
         Args:
             tfrecord_path (str): a basepath to tfrecord files
@@ -72,7 +87,7 @@ class Parser(object):
                                     cycle_length=num_shards,
                                     num_parallel_calls=tf.data.experimental.AUTOTUNE)
         dataset = dataset.shuffle(2 * batch_size)
-        dataset = dataset.map(map_func=self, num_parallel_calls=tf.data.AUTOTUNE)
+        dataset = dataset.map(map_func=self, num_parallel_calls=tf.data.experimental.AUTOTUNE)
         dataset = dataset.batch(batch_size)
         dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
 
@@ -80,7 +95,7 @@ class Parser(object):
 
 
     def _decode(self, parsed_tensor):
-        """Decode tfreocrd example back to original data
+        """Decode tfrecord example back to data's original state
 
         Args:
             parsed_tensor (tf.Tensor): a parsed example
@@ -89,9 +104,9 @@ class Parser(object):
             dict: A dictionary with same keys that store decoded/extracted data
         """
         image = tf.io.decode_jpeg(parsed_tensor['image'])
-        num_obj = parsed_tensor['num_obj'].numpy()
-        height = parsed_tensor['height'].numpy()
-        width = parsed_tensor['width'].numpy()
+        num_obj = parsed_tensor['num_obj']
+        height = parsed_tensor['height']
+        width = parsed_tensor['width']
 
         if num_obj > 0:
             mask_feature = tf.sparse.to_dense(parsed_tensor['mask'])
@@ -131,29 +146,35 @@ class Parser(object):
         """
         image = tf.image.resize(data['image'], [self.input_size, self.input_size])
         image = tf.image.convert_image_dtype(image, dtype=tf.float32)
+        width = tf.cast(data['width'], tf.float32)
+        height = tf.cast(data['height'], tf.float32)
 
         box_x_min = tf.slice(data['box'], [0, 0], [data['num_obj'], 1])
         box_y_min = tf.slice(data['box'], [0, 1], [data['num_obj'], 1])
         box_width = tf.slice(data['box'], [0, 2], [data['num_obj'], 1])
         box_height = tf.slice(data['box'], [0, 3], [data['num_obj'], 1])
-        box_center_x_grid = (box_x_min + box_width / 2) / data['width'] * self.grid_number      # shape (num_obj, 1)
-        box_center_y_grid = (box_y_min + box_height / 2) / data['height'] * self.grid_number    # shape (num_obj, 1)
+        box_center_x_grid = (box_x_min + box_width / 2) / width * self.grid_number      # shape (num_obj, 1)
+        box_center_y_grid = (box_y_min + box_height / 2) / height * self.grid_number    # shape (num_obj, 1)
         box_center_x_grid = tf.cast(box_center_x_grid, dtype=tf.int32)
         box_center_y_grid = tf.cast(box_center_y_grid, dtype=tf.int32)
-        box_center_grid = tf.stack([box_center_x_grid, box_center_y_grid], axis=1)              # shape (num_obj, 2)
+        box_center_grid = tf.stack([box_center_x_grid, box_center_y_grid], axis=1)      # shape (num_obj, 2)
         box_center_grid = tf.squeeze(box_center_grid, axis=2)
 
-        cat = tf.scatter_nd(box_center_grid,
-                            data['id'],
-                            tf.constant([self.grid_number, self.grid_number]))                  # shape (S, S)
-        cat = tf.one_hot(cat, self.num_class, dtype=tf.float32)                                 # shape (S, S, C)
+        # We transform cat to 1-based index tensor to distinguish with no object locations
+        # And when building one hot tensor, we minus all tensor 1 unit to convert back to 0-based index
+        # All no location with no object become -1
+        shape = tf.constant([self.grid_number, self.grid_number])
+        cat = tf.scatter_nd(box_center_grid, data['id'] + 1, shape) - 1                 # shape (S, S)
+        cat = tf.one_hot(cat, self.num_class, dtype=tf.float32)                         # shape (S, S, C)
 
-        k = self.grid_number * box_center_y_grid + box_center_x_grid                            # shape (num_obj, 1)
-        mask = tf.scatter_nd(k,
-                             data['mask'],
-                             tf.constant([self.grid_number * self.grid_number, data['height'], data['width']]))    # shape (S^2, H, W)
-        mask = tf.transpose(mask, perm=[1,2,0])                                                 # shape (H, W, S^2)
-        mask = tf.image.resize(mask, [self.input_size, self.input_size])                        # shape (input_size, input_size, S^2)
+        # Calculate location k, then create mask label and assign to calculated positions via scatter_nd
+        k = self.grid_number * box_center_y_grid + box_center_x_grid                    # shape (num_obj, 1)
+        shape = tf.concat([[self.grid_number*self.grid_number],
+                           [tf.cast(data['height'], tf.int32)],
+                           [tf.cast(data['width'], tf.int32)]], 0)
+        mask = tf.scatter_nd(k, data['mask'], shape)                                    # shape (S^2, H, W)
+        mask = tf.transpose(mask, perm=[1,2,0])                                         # shape (H, W, S^2)
+        mask = tf.image.resize(mask, [self.input_size, self.input_size])                # shape (input_size, input_size, S^2)
 
         for augment in self.augmentations:
             if tf.random.uniform([1]) > 0.5:
@@ -172,4 +193,7 @@ if __name__ == "__main__":
     dataset = parser.build_dataset(args.tfrecord_path)
 
     for image, cat, mask in dataset.take(1):
-        print(tf.math.reduce_sum(cat))
+        print("num_obj:", tf.math.reduce_sum(cat).numpy())
+        print("image shape:", image.shape)
+        print("cat shape", cat.shape)
+        print("mask shape", mask.shape)
