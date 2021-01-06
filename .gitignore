@@ -1,7 +1,7 @@
 .vscode/
 
 dataset/
-ckpt/
+checkpoints/
 weights/
 results/
 logs/

@@ -12,10 +12,11 @@ class SOLO(tf.keras.Model):
         self.num_class = num_class
         self.input_size = input_size
         self.grid_sizes = grid_sizes
-        self.backbone = backbone
+        self.backbone_name = backbone
         self.head_style = head_style
         self.head_depth = head_depth
         self.fpn_channel = fpn_channel
+        self.model_name = "SOLO_" + backbone
 
         if backbone == 'resnet50':
             self.backbone_out_layers = ['conv3_block4_out', 'conv4_block6_out', 'conv5_block3_out']
@@ -70,9 +71,10 @@ class SOLO(tf.keras.Model):
         config['num_class'] = self.num_class,
         config['input_size'] = self.input_size,
         config['grid_sizes'] = self.grid_sizes,
-        config['backbone'] = self.backbone,
+        config['backbone_name'] = self.backbone_name,
         config['backbone_out_layers'] = self.backbone_out_layers,
         config['head_style'] = self.head_style,
         config['head_depth'] = self.head_depth,
-        config['fpn_channel'] = self.fpn_channel
+        config['fpn_channel'] = self.fpn_channel,
+        config['model_name'] = self.model_name
         return config

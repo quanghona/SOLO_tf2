@@ -43,8 +43,10 @@ class PredictionHead(tf.keras.layers.Layer):
         # Mask branch
         if head_style == 'vanilla':
             num_mask_branch = 1
+            mask_out_num_channel = grid_sizes[0]*grid_sizes[0]
         elif head_style == 'decoupled':
             num_mask_branch = 2
+            mask_out_num_channel = grid_sizes[0]
         else:
             raise ValueError(f"Head style {head_style} not supported")
         mask_conv_channels = [[self.num_channel, self.num_channel]] * num_mask_branch # number of channels for all sub-branchs in mask branchs
@@ -63,7 +65,6 @@ class PredictionHead(tf.keras.layers.Layer):
                 branch_conv.append(mask_conv)
 
             for grid_size in grid_sizes:
-                mask_out_num_channel = grid_size*grid_size if head_style == "vanilla" else grid_size
                 branch_out[grid_size] = tf.keras.layers.Conv2D(mask_out_num_channel, (3,3), 1, padding="same",
                                                                kernel_initializer=tf.keras.initializers.glorot_uniform(),
                                                                activation="sigmoid")

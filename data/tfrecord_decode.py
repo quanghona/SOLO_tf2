@@ -1,7 +1,7 @@
 import tensorflow as tf
 import argparse
 import os
-import augmentation as aug
+import data.augmentation as aug
 
 
 class Parser(object):
@@ -62,7 +62,7 @@ class Parser(object):
         """Build a dataset object from tfrecord input. Setup batch, epoch, concurrency processing...
 
         Args:
-            tfrecord_path (str): a basepath to tfrecord files
+            tfrecord_path (str): a basepath to tfrecord files, without index to get all shards
             batch_size (int, optional): batch size. Defaults to 8.
             num_epoch (int, optional): number of epoch to repeat. Only affect in train mode.
             If set to None, the dataset will reapeat indefinitely. Defaults to None.
@@ -82,11 +82,12 @@ class Parser(object):
                 dataset = dataset.repeat()
             else:
                 dataset = dataset.repeat(num_epoch)
-        dataset = dataset.shuffle(num_shards, reshuffle_each_iteration=True)
+            dataset = dataset.shuffle(num_shards, reshuffle_each_iteration=True)
         dataset = dataset.interleave(tf.data.TFRecordDataset,
                                     cycle_length=num_shards,
                                     num_parallel_calls=tf.data.experimental.AUTOTUNE)
-        dataset = dataset.shuffle(2 * batch_size)
+        if self._is_training:
+            dataset = dataset.shuffle(2 * batch_size)
         dataset = dataset.map(map_func=self, num_parallel_calls=tf.data.experimental.AUTOTUNE)
         dataset = dataset.batch(batch_size)
         dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
@@ -139,7 +140,7 @@ class Parser(object):
 
         Args:
             data (dict): a dictionary that sotre decoded data. Typically this is
-            otuput from _decode method
+            output from _decode method
 
         Returns:
             tuple: (image, category, mask) tensors
@@ -163,7 +164,7 @@ class Parser(object):
         # We transform cat to 1-based index tensor to distinguish with no object locations
         # And when building one hot tensor, we minus all tensor 1 unit to convert back to 0-based index
         # All no location with no object become -1
-        shape = tf.constant([self.grid_number, self.grid_number])
+        shape = tf.squeeze(tf.constant([self.grid_number, self.grid_number]))
         cat = tf.scatter_nd(box_center_grid, data['id'] + 1, shape) - 1                 # shape (S, S)
         cat = tf.one_hot(cat, self.num_class, dtype=tf.float32)                         # shape (S, S, C)
 
