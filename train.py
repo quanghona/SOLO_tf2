@@ -195,7 +195,7 @@ if __name__ == "__main__":
                           ('val_mask_loss', l_mask),
                           ('val_acc', val_acc.result()),
                           ('val_meaniou', val_meaniou.result())]
-                progbar.update(val_step, values)
+                val_progbar.update(val_step, values)
 
                 val_loss.update_state(total_loss)
                 val_cat_loss.update_state(l_cate)
